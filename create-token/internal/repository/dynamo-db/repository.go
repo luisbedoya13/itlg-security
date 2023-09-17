@@ -1,4 +1,4 @@
-package main
+package dynamo_db
 
 import (
 	"context"
@@ -9,19 +9,16 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	"github.com/subosito/gotenv"
-	"itlg_security/create/pkg/model"
-	"log"
+	"itlg_security/create-token/internal/repository"
+	"itlg_security/create-token/pkg/model"
 	"os"
 )
 
-func init() {
-	if err := gotenv.Load("../../.env"); err != nil {
-		log.Fatalf("Error loading variables: %v\n", err)
-	}
+type Reposiroty struct {
+	client *dynamodb.Client
 }
 
-func main() {
+func New() (*Reposiroty, error) {
 	creds := credentials.StaticCredentialsProvider{
 		Value: aws.Credentials{
 			AccessKeyID:     os.Getenv("AWS_ACCESS_KEY_ID"),
@@ -34,20 +31,27 @@ func main() {
 		config.WithCredentialsProvider(creds),
 	)
 	if err != nil {
-		log.Printf("Error loading config: %v\n", err)
+		return nil, err
+	} else {
+		return &Reposiroty{client: dynamodb.NewFromConfig(cfg)}, nil
 	}
-	ddbClient := dynamodb.NewFromConfig(cfg)
-	output, err := ddbClient.GetItem(context.TODO(), &dynamodb.GetItemInput{
-		Key:       map[string]types.AttributeValue{"email": &types.AttributeValueMemberS{Value: "owner@mail.com"}},
+}
+
+func (r *Reposiroty) GetUser(ctx context.Context, email string) (*model.DdbUser, error) {
+	output, err := r.client.GetItem(ctx, &dynamodb.GetItemInput{
+		Key:       map[string]types.AttributeValue{"email": &types.AttributeValueMemberS{Value: email}},
 		TableName: aws.String(fmt.Sprintf("itlg-%s-users", os.Getenv("STAGE"))),
 	})
 	if err != nil {
-		log.Printf("Couldn't get item. Here's why: %v\n", err)
+		return nil, err
 	} else {
 		user := model.DdbUser{}
-		if err := attributevalue.UnmarshalMap(output.Item, &user); err != nil {
-			log.Fatal(err)
+		if len(output.Item) == 0 {
+			return nil, repository.ErrNotFound
 		}
-		fmt.Println(user)
+		if err := attributevalue.UnmarshalMap(output.Item, &user); err != nil {
+			return nil, err
+		}
+		return &user, nil
 	}
 }
